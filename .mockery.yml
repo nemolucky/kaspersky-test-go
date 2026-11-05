@@ -9,3 +9,11 @@ packages:
           pkgname: mocks
           filename: threat_repository_mock.go
           structname: MockThreatRepository
+  github.com/nemolucky/kaspersky-test-go/internal/handler:
+    interfaces:
+      ThreatUsecase:
+        config:
+          dir: internal/handler/mocks
+          pkgname: mocks
+          filename: threat_usecase_mock.go
+          structname: MockThreatUsecase
