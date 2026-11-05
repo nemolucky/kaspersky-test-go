@@ -8,3 +8,12 @@ const (
 	SeverityHigh     Severity = "high"
 	SeverityCritical Severity = "critical"
 )
+
+func (s Severity) Valid() bool {
+	switch s {
+	case SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
+		return true
+	default:
+		return false
+	}
+}
