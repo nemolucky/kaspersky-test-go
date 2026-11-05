@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,7 +20,7 @@ import (
 const testMD5 = "d41d8cd98f00b204e9800998ecf8427e"
 
 func newTestHandler(repo *mocks.MockThreatUsecase) http.Handler {
-	h := handler.NewHandler(repo)
+	h := handler.NewHandler(repo, slog.Default())
 	return h.Routes()
 }
 
@@ -138,34 +139,46 @@ func TestCreateThreatInvalidJSON(t *testing.T) {
 
 func TestCreateThreatErrors(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		wantStatus int
+		name        string
+		err         error
+		wantStatus  int
+		wantMessage string
+		wantDetails string
 	}{
 		{
-			name:       "invalid md5",
-			err:        domain.ErrInvalidMD5,
-			wantStatus: http.StatusBadRequest,
+			name:        "invalid md5",
+			err:         domain.ErrInvalidMD5,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid md5",
+			wantDetails: "MD5 must contain 32 hexadecimal characters",
 		},
 		{
-			name:       "invalid name",
-			err:        domain.ErrInvalidName,
-			wantStatus: http.StatusBadRequest,
+			name:        "invalid name",
+			err:         domain.ErrInvalidName,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid threat name",
+			wantDetails: "Name must not be empty",
 		},
 		{
-			name:       "invalid severity",
-			err:        domain.ErrInvalidSeverity,
-			wantStatus: http.StatusBadRequest,
+			name:        "invalid severity",
+			err:         domain.ErrInvalidSeverity,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid threat severity",
+			wantDetails: "Allowed values: low, medium, high, critical",
 		},
 		{
-			name:       "threat already exists",
-			err:        domain.ErrThreatAlreadyExists,
-			wantStatus: http.StatusConflict,
+			name:        "threat already exists",
+			err:         domain.ErrThreatAlreadyExists,
+			wantStatus:  http.StatusConflict,
+			wantMessage: "threat already exists",
+			wantDetails: "A threat with the specified MD5 already exists",
 		},
 		{
-			name:       "internal error",
-			err:        errors.New("database connection failed"),
-			wantStatus: http.StatusInternalServerError,
+			name:        "internal error",
+			err:         errors.New("database connection failed"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "internal server error",
+			wantDetails: "",
 		},
 	}
 
@@ -204,13 +217,27 @@ func TestCreateThreatErrors(t *testing.T) {
 			router.ServeHTTP(rec, req)
 
 			require.Equal(t, tt.wantStatus, rec.Code)
+			require.Equal(
+				t,
+				"application/json",
+				rec.Header().Get("Content-Type"),
+			)
 
 			var response handler.ErrorResponse
-			require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-			require.NotEmpty(t, response.Message)
+			require.NoError(
+				t,
+				json.NewDecoder(rec.Body).Decode(&response),
+			)
+
+			require.Equal(t, tt.wantMessage, response.Message)
+			require.Equal(t, tt.wantDetails, response.Details)
 
 			if tt.wantStatus == http.StatusInternalServerError {
-				require.NotContains(t, rec.Body.String(), "database connection failed")
+				require.NotContains(
+					t,
+					rec.Body.String(),
+					"database connection failed",
+				)
 			}
 		})
 	}
@@ -414,13 +441,15 @@ func TestUpdateThreat(t *testing.T) {
 
 func TestUpdateThreatErrors(t *testing.T) {
 	tests := []struct {
-		name       string
-		md5        string
-		body       string
-		threat     domain.Threat
-		err        error
-		wantStatus int
-		wantCall   bool
+		name        string
+		md5         string
+		body        string
+		threat      domain.Threat
+		err         error
+		wantStatus  int
+		wantMessage string
+		wantDetails string
+		wantCall    bool
 	}{
 		{
 			name: "invalid md5",
@@ -431,9 +460,11 @@ func TestUpdateThreatErrors(t *testing.T) {
 				Name:     "Test",
 				Severity: domain.SeverityHigh,
 			},
-			err:        domain.ErrInvalidMD5,
-			wantStatus: http.StatusBadRequest,
-			wantCall:   true,
+			err:         domain.ErrInvalidMD5,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid md5",
+			wantDetails: "MD5 must contain 32 hexadecimal characters",
+			wantCall:    true,
 		},
 		{
 			name: "invalid name",
@@ -444,9 +475,11 @@ func TestUpdateThreatErrors(t *testing.T) {
 				Name:     "",
 				Severity: domain.SeverityHigh,
 			},
-			err:        domain.ErrInvalidName,
-			wantStatus: http.StatusBadRequest,
-			wantCall:   true,
+			err:         domain.ErrInvalidName,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid threat name",
+			wantDetails: "Name must not be empty",
+			wantCall:    true,
 		},
 		{
 			name: "invalid severity",
@@ -457,9 +490,11 @@ func TestUpdateThreatErrors(t *testing.T) {
 				Name:     "Test",
 				Severity: domain.Severity("unknown"),
 			},
-			err:        domain.ErrInvalidSeverity,
-			wantStatus: http.StatusBadRequest,
-			wantCall:   true,
+			err:         domain.ErrInvalidSeverity,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "invalid threat severity",
+			wantDetails: "Allowed values: low, medium, high, critical",
+			wantCall:    true,
 		},
 		{
 			name: "threat not found",
@@ -470,9 +505,11 @@ func TestUpdateThreatErrors(t *testing.T) {
 				Name:     "Test",
 				Severity: domain.SeverityHigh,
 			},
-			err:        domain.ErrThreatNotFound,
-			wantStatus: http.StatusNotFound,
-			wantCall:   true,
+			err:         domain.ErrThreatNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "threat not found",
+			wantDetails: "No threat exists with the specified MD5",
+			wantCall:    true,
 		},
 		{
 			name: "internal error",
@@ -483,9 +520,11 @@ func TestUpdateThreatErrors(t *testing.T) {
 				Name:     "Test",
 				Severity: domain.SeverityHigh,
 			},
-			err:        errors.New("database connection failed"),
-			wantStatus: http.StatusInternalServerError,
-			wantCall:   true,
+			err:         errors.New("database connection failed"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "internal server error",
+			wantDetails: "",
+			wantCall:    true,
 		},
 	}
 
@@ -513,10 +552,20 @@ func TestUpdateThreatErrors(t *testing.T) {
 			router.ServeHTTP(rec, req)
 
 			require.Equal(t, tt.wantStatus, rec.Code)
+			require.Equal(
+				t,
+				"application/json",
+				rec.Header().Get("Content-Type"),
+			)
 
 			var response handler.ErrorResponse
-			require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-			require.NotEmpty(t, response.Message)
+			require.NoError(
+				t,
+				json.NewDecoder(rec.Body).Decode(&response),
+			)
+
+			require.Equal(t, tt.wantMessage, response.Message)
+			require.Equal(t, tt.wantDetails, response.Details)
 
 			if tt.wantStatus == http.StatusInternalServerError {
 				require.NotContains(

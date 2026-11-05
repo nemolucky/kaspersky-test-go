@@ -19,13 +19,21 @@ func (h *Handler) UpdateThreat(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		renderBadRequest(w, "invalid request body")
+		h.renderBadRequest(
+			w,
+			r,
+			"Request body must be a valid JSON object",
+		)
 		return
 	}
 
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		renderBadRequest(w, "request body must contain a single JSON object")
+		h.renderBadRequest(
+			w,
+			r,
+			"Request body must contain exactly one JSON object",
+		)
 		return
 	}
 
