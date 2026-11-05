@@ -3,42 +3,32 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/nemolucky/kaspersky-test-go/internal/adapter/postgres"
 	"github.com/nemolucky/kaspersky-test-go/internal/config"
+	"github.com/nemolucky/kaspersky-test-go/internal/handler"
+	"github.com/nemolucky/kaspersky-test-go/internal/usecase"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("application stopped", "error", err)
+		slog.Error("application failed", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
 func run() error {
-
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
 	}
 
-	level := slog.LevelInfo
-	if err := level.UnmarshalText([]byte(cfg.App.LogLevel)); err != nil {
-		return fmt.Errorf("parse log level: %w", err)
-	}
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
-	}))
-	slog.SetDefault(logger)
+	logger := config.NewLogger(cfg.App.LogLevel)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -47,66 +37,56 @@ func run() error {
 	)
 	defer stop()
 
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	db, err := postgres.Connect(dbCtx, cfg.Postgres.BuildDSN())
+	db, err := postgres.Connect(ctx, cfg.Postgres.DSN())
 	if err != nil {
-		return fmt.Errorf("connect postgres: %w", err)
+		return err
 	}
 	defer db.Close()
 
-	logger.Info("postgres connected")
+	threatUsecase := usecase.NewThreatUsecase(db)
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	threatHandler := handler.NewHandler(
+		threatUsecase,
+		logger,
+	)
 
 	server := &http.Server{
-		Addr:              net.JoinHostPort(cfg.HTTP.Host, cfg.HTTP.Port),
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       cfg.HTTP.ReadTimeout,
-		WriteTimeout:      cfg.HTTP.WriteTimeout,
-		IdleTimeout:       cfg.HTTP.IdleTimeout,
+		Addr:         cfg.HTTP.Address(),
+		Handler:      threatHandler.Routes(),
+		ReadTimeout:  cfg.HTTP.ReadTimeout,
+		WriteTimeout: cfg.HTTP.WriteTimeout,
+		IdleTimeout:  cfg.HTTP.IdleTimeout,
 	}
 
 	serverErr := make(chan error, 1)
 
 	go func() {
-		logger.Info("http server starting", "addr", server.Addr)
+		logger.Info("HTTP server started", slog.String("address", server.Addr))
+
 		serverErr <- server.ListenAndServe()
 	}()
 
 	select {
-	case <-ctx.Done():
-		logger.Info("shutdown signal received")
-
 	case err := <-serverErr:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("http server: %w", err)
+			return err
 		}
-		return nil
+
+	case <-ctx.Done():
+		logger.Info("shutting down HTTP server")
 	}
 
-	stop()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(
+	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(),
 		cfg.HTTP.ShutdownTimeout,
 	)
-	defer shutdownCancel()
+	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
-		return fmt.Errorf("shutdown http server: %w", err)
+		return err
 	}
 
-	logger.Info("http server stopped gracefully")
+	logger.Info("HTTP server stopped")
 
 	return nil
 }
