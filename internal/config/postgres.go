@@ -14,7 +14,7 @@ type PostgresConfig struct {
 	SSLMode  string `env:"POSTGRES_SSL" envDefault:"disable"`
 }
 
-func (pc PostgresConfig) BuildDSN() string {
+func (pc PostgresConfig) DSN() string {
 	u := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(pc.User, pc.Password),
