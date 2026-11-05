@@ -1,0 +1,11 @@
+template: testify
+
+packages:
+  github.com/nemolucky/kaspersky-test-go/internal/usecase:
+    interfaces:
+      ThreatRepository:
+        config:
+          dir: internal/usecase/mocks
+          pkgname: mocks
+          filename: threat_repository_mock.go
+          structname: MockThreatRepository
