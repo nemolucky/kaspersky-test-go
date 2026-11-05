@@ -80,9 +80,12 @@ func (h *Handler) renderBadRequest(
 	r *http.Request,
 	details string,
 ) {
-	if err := renderJSON(w, http.StatusBadRequest, ErrorResponse{
+	response := ErrorResponse{
+		Message: "invalid request body",
 		Details: details,
-	}); err != nil {
+	}
+
+	if err := renderJSON(w, http.StatusBadRequest, response); err != nil {
 		h.logger.ErrorContext(
 			r.Context(),
 			"failed to write bad request response",
